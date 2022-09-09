@@ -6,6 +6,7 @@ This OV extension integrates Convai’s Character API to easily connect characte
 Please make sure you run "Install_requirments.bat" in the extension directory to install the required python packages.
 
 
+
 ## Setting up your Extension API Key:
 To integrate your Convai in your project,
 
