@@ -10,7 +10,7 @@ description="Integrate Convai chatbot API with Omniverse, please check README fi
 readme  = "docs/README.md"
 
 # URL of the extension source repository.
-repository = "https://github.com/Conv-AI/ov_extension"
+repository = ""
 
 # One of categories for UI.
 category = "Convai"
