@@ -253,14 +253,12 @@ class MyExtension(omni.ext.IExt):
                 with ui.HStack(height = ui.Length(30)):
                     l = ui.Label("Enter Convai API key")
                     self.APIKey_input_UI = ui.StringField()
-                    self.APIKey_input_UI.model.set_value("de254964d75f1e825f6954192b6b4499")
                     # self.APIKey_input_UI.height = ui.Length(30)
                     # l.height = ui.Length(30)
                 ui.Spacer(height=5)
                 with ui.HStack(height = ui.Length(30)):
                     l = ui.Label("Enter Char ID")
                     self.CharID_input_UI = ui.StringField()
-                    self.CharID_input_UI.model.set_value('669a6bd2-1364-11ed-8c0b-0242ac120003')
 
                 # button_width = Constant.ADD_BUTTON_SIZE + 25
                 # add_button = ui.Button(f"{_get_plus_glyph()} Add", width=button_width, height=LABEL_HEIGHT, name="add", clicked_fn=partial(on_add_target, weak_self=weakref.ref(self)))
@@ -271,7 +269,7 @@ class MyExtension(omni.ext.IExt):
                 
                 ui.Label("Enter comma seperated events here:")
                 self.text_input_UI = ui.StringField(height = ui.Length(30))
-                self.text_input_UI.model.set_value("dance,magic")
+                # self.text_input_UI.model.set_value("dance,magic")
 
                 self.VoiceCap_Btn = ui.Button("Start Voice Capture", clicked_fn=lambda: on_VoiceCap(), height = ui.Length(30))
                 def on_VoiceCap():
