@@ -2,7 +2,7 @@
 This OV extension integrates Convai’s Character API to easily connect characters with intelligence that can converse with us naturally and carry out corresponding animations. You can define your desired character’s backstory and voice at convai.com and connect the character using its character ID via this plugin to your 3D character asset. The Character API is able to generate intelligent animation based on your conversation and requests.
 
 
-## Requirments
+## Requirements
 Please make sure you run "Install_requirments.bat" in the extension directory to install the required python packages.
 
 
