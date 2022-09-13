@@ -3,8 +3,8 @@
 version = "0.1"
 
 # The title and description fields are primarily for displaying extension info in UI
-title = "Convai character"
-description="Integrate Convai character API with Omniverse, please check README file."
+title = "Convai Character API"
+description="Integrate Convai character API with Omniverse."
 
 # Path (relative to the root) or content of readme markdown file for UI.
 readme  = "docs/README.md"
@@ -22,6 +22,7 @@ keywords = ["kit", "convai"]
 # Use omni.ui to build simple UI
 [dependencies]
 "omni.kit.uiapp" = {}
+"omni.anim.graph.bundle" = {}
 
 # Main python module this extension provides, it will be publicly available as "import convai".
 [[python.module]]

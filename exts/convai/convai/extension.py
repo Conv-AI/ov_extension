@@ -26,6 +26,7 @@ import carb.events
 import numpy as np
 from omni.usd.commands.stage_helper import UsdStageHelper
 
+
 class Constant:
     def __setattr__(self, name, value):
         raise Exception(f"Can't change Constant.{name}")
@@ -231,8 +232,6 @@ class MyExtension(omni.ext.IExt):
         # self.EventsToLaunch.append({'class': "talk", 'TimeToFire': 1})
         # self.EventsToLaunch.append({'class': "dance", 'TimeToFire': 3})
 
-        omni.kit.commands.execute('DeletePrims',
-        paths=['/World/Convai_Audio'])
 
         self.VoiceCap_Btn = ui.Button("Start Voice Capture", clicked_fn=lambda: on_VoiceCap())
 
@@ -263,13 +262,20 @@ class MyExtension(omni.ext.IExt):
                 # button_width = Constant.ADD_BUTTON_SIZE + 25
                 # add_button = ui.Button(f"{_get_plus_glyph()} Add", width=button_width, height=LABEL_HEIGHT, name="add", clicked_fn=partial(on_add_target, weak_self=weakref.ref(self)))
                 
+
+
                 self.response_UI_Label = ui.Label("<Response will apear here>", height = ui.Length(60), word_wrap = True)
                 self.class_UI_Label = ui.Label("<Class will apear here>", height = ui.Length(30), word_wrap = False)
 
-                
                 ui.Label("Enter comma seperated events here:")
                 self.text_input_UI = ui.StringField(height = ui.Length(30))
                 # self.text_input_UI.model.set_value("dance,magic")
+               
+                # For Testing
+                self.APIKey_input_UI.model.set_value("de254964d75f1e825f6954192b6b4499")
+                self.CharID_input_UI.model.set_value("23dbb248-f626-11ec-9769-0242ac150002")
+                self.text_input_UI.model.set_value("hello,jump,kick,spellcast,dance")
+                ##
 
                 self.VoiceCap_Btn = ui.Button("Start Voice Capture", clicked_fn=lambda: on_VoiceCap(), height = ui.Length(30))
                 def on_VoiceCap():
@@ -341,14 +347,16 @@ class MyExtension(omni.ext.IExt):
                 classes = self.text_input_UI.model.get_value_as_string().replace(" ", "").split(',')
                 if classification in classes:
                     threading.Thread(target=AppendDelayedEvent, args=(classification, Duration)).start()
-                    threading.Thread(target=AppendDelayedEvent, args=('idle' ,Duration+12)).start()
+                    # threading.Thread(target=AppendDelayedEvent, args=('idle' ,Duration+12)).start()
                 else:
                     threading.Thread(target=AppendDelayedEvent, args=('idle' ,Duration)).start()
 
             except Exception as e:
-                print(e)
+                print("error: " + str(e))
+                print("response: " + Response.text)
+                
                 self.response_UI_Label.text = "Error: Check the logs"
-                self.class_UI_Label.text = "idle"
+                self.class_UI_Label.text = "Error: " + str(e)
                 return
 
             finally:
@@ -396,18 +404,20 @@ class MyExtension(omni.ext.IExt):
 
     def SpawnAudio(self, AudioFilePath, duration=0):
         stage = UsdStageHelper()._get_stage()
+        
         startTimeActual = omni.timeline.get_timeline_interface().get_current_time()
-        startTimeFrame = omni.timeline.get_timeline_interface().get_current_time() * stage.GetTimeCodesPerSecond()
+        startTimeFrame = startTimeActual * stage.GetTimeCodesPerSecond()
         endTimeFrame = (startTimeActual + duration) * stage.GetTimeCodesPerSecond()
         endTimeFrameActual = endTimeFrame / stage.GetTimeCodesPerSecond()
-
+        print("Duration: " + str(duration) + "seconds, Start Frame: " + str(startTimeFrame) + "End frame: " + str(endTimeFrame))
         if endTimeFrame > stage.GetEndTimeCode():
             omni.timeline.get_timeline_interface().set_start_time(0)
             omni.timeline.get_timeline_interface().set_end_time(0)
-            omni.timeline.get_timeline_interface().set_end_time(duration)
+            omni.timeline.get_timeline_interface().set_end_time(math.ceil(duration) + 1) #  + 1 margin
             startTimeFrame = Sdf.TimeCode(0)
             # omni.timeline.get_timeline_interface().play()
             self.TryToPlay = 10
+            print ("set end time to: " + str(duration) + " seconds which is " + str(endTimeFrame-startTimeFrame) + " frames")
 
         omni.kit.commands.execute('DeletePrims',
             paths=['/World/Convai_Audio'])
