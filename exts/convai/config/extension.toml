@@ -6,8 +6,14 @@ version = "0.1"
 title = "Convai Character API"
 description="Integrate Convai character API with Omniverse."
 
+icon = "data/icon.png"
+preview_image = "data/preview.png"
+
+
 # Path (relative to the root) or content of readme markdown file for UI.
 readme  = "docs/README.md"
+
+feature = true
 
 # URL of the extension source repository.
 repository = ""
