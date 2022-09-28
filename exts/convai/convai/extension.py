@@ -272,9 +272,6 @@ class MyExtension(omni.ext.IExt):
                 # self.text_input_UI.model.set_value("dance,magic")
                
                 # For Testing
-                self.APIKey_input_UI.model.set_value("de254964d75f1e825f6954192b6b4499")
-                self.CharID_input_UI.model.set_value("23dbb248-f626-11ec-9769-0242ac150002")
-                self.text_input_UI.model.set_value("hello,jump,kick,spellcast,dance")
                 ##
 
                 self.VoiceCap_Btn = ui.Button("Start Voice Capture", clicked_fn=lambda: on_VoiceCap(), height = ui.Length(30))
@@ -343,9 +340,14 @@ class MyExtension(omni.ext.IExt):
                     time.sleep(TimeToFire)
                     self.EventsToLaunch.append(DelayedEvent)
 
-                threading.Thread(target=AppendDelayedEvent, args=('talk', 0)).start()
+                if classification == "hello":
+                    threading.Thread(target=AppendDelayedEvent, args=('hello', 0)).start()
+                    threading.Thread(target=AppendDelayedEvent, args=('talk', 1)).start()
+                else:
+                    threading.Thread(target=AppendDelayedEvent, args=('talk', 0)).start()
+
                 classes = self.text_input_UI.model.get_value_as_string().replace(" ", "").split(',')
-                if classification in classes:
+                if classification in classes and classification != "hello":
                     threading.Thread(target=AppendDelayedEvent, args=(classification, Duration)).start()
                     # threading.Thread(target=AppendDelayedEvent, args=('idle' ,Duration+12)).start()
                 else:
@@ -393,7 +395,7 @@ class MyExtension(omni.ext.IExt):
             #     classification = eventToLaunch["class"]
             #     FireEvent(classification) 
             #     print("Fired event: " + classification + ", at time: " + str(CurrentTIme))
-            if (eventToLaunch != "talk"):
+            if (eventToLaunch not in ["talk", "hello"]):
                 omni.kit.commands.execute('DeletePrims',
                 paths=['/World/Convai_Audio'])
             FireEvent(eventToLaunch) 
