@@ -1,0 +1,4 @@
+scipy
+wavio
+sounddevice
+requests

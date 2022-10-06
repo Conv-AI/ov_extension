@@ -271,8 +271,6 @@ class MyExtension(omni.ext.IExt):
                 self.text_input_UI = ui.StringField(height = ui.Length(30))
                 # self.text_input_UI.model.set_value("dance,magic")
                
-                # For Testing
-                ##
 
                 self.VoiceCap_Btn = ui.Button("Start Voice Capture", clicked_fn=lambda: on_VoiceCap(), height = ui.Length(30))
                 def on_VoiceCap():
