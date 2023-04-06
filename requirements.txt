@@ -2,3 +2,9 @@ scipy
 wavio
 sounddevice
 requests
+googleapis-common-protos
+grpcio==1.51.1
+grpcio-tools==1.51.1
+protobuf==4.21.10
+PyAudio==0.2.12
+pydub==0.25.1

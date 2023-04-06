@@ -1,481 +1,562 @@
-from asyncio import constants
-import math
-import omni.ext
-from omni.kit.widget.stage.event import EventSubscription
-import omni.ui as ui
-from omni.kit.window.property.templates import HORIZONTAL_SPACING, LABEL_HEIGHT, LABEL_WIDTH, SimplePropertyWidget
-import omni.kit.commands
-from pxr import Sdf, Usd, UsdSkel
-import weakref
-from functools import partial
-import threading
-
-import queue
-import requests
-import json
-import time
-import subprocess
-import sys, os
-import base64
-import sounddevice as sd
-from scipy.io.wavfile import write, WAVE_FORMAT
-import wavio as wv
-import struct
-import omni.kit.app
-import carb.events
+import math, os
+import asyncio
 import numpy as np
-from omni.usd.commands.stage_helper import UsdStageHelper
+import omni.ext
+import carb.events
+import omni.ui as ui
+import configparser
+import pyaudio
+import grpc
+from .rpc import service_pb2 as convai_service_msg
+from .rpc import service_pb2_grpc as convai_service
+from .convai_audio_player import ConvaiAudioPlayer
+from typing import Generator
+import io
+from pydub import AudioSegment
+import threading
+import traceback
+import time
+from collections import deque
+import random
 
+__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
-class Constant:
-    def __setattr__(self, name, value):
-        raise Exception(f"Can't change Constant.{name}")
+CHUNK = 1024
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+RATE = 12000
 
-    MIXED = "Mixed"
-    MIXED_COLOR = 0xFFCC9E61
-    LABEL_COLOR = 0xFF9E9E9E
-    LABEL_FONT_SIZE = 14
-    LABEL_WIDTH = 80
-    ADD_BUTTON_SIZE = 52
+def log(text: str, warning: bool =False):
+    print(f"[convai] {'[Warning]' if warning else ''} {text}")
 
-
-def _get_plus_glyph():
-    return omni.kit.ui.get_custom_glyph_code("${glyphs}/menu_context.svg")
-
-
-# omni.kit.commands.execute('AssignAnimation',
-# 	skeleton_path='/World/party_m_0001/ManRoot/Party_M_0001/Party_M_0001/Party_M_0001',
-# 	animprim_path='/World/aerobic_dance_315220')
-
-# omni.kit.commands.execute('SetAnimCurveKey',
-# 	paths=['/World/Cone.xformOp:translate', '/World/Cone.xformOp:rotateXYZ', '/World/Cone.xformOp:scale', '/World/Cone.visibility'])
-
-
-# omni.kit.commands.execute('AddRelationshipTarget',
-# 	relationship=Usd.Prim(</World/party_m_0001/ManRoot/Party_M_0001/Party_M_0001/Party_M_0001>).GetRelationship('skel:animationSource'),
-# 	target=Sdf.Path('/World/stand_talk_251115'))
-
-# omni.kit.commands.execute('ChangeProperty',
-# 	prop_path=Sdf.Path('/World/party_m_0001/ManRoot/Party_M_0001/Party_M_0001/Party_M_0001.purpose'),
-# 	value='render',
-# 	prev=None)
-
-
-# omni.kit.commands.execute('SetAnimCurveKey',
-# 	paths=['/World/party_m_0001/ManRoot/Party_M_0001/Party_M_0001/Party_M_0001.visibility'])
-
-
-
-
-# def registered_event_name(event_name):
-#     """Returns the internal name used for the given custom event name"""
-#     n = "omni.graph.action." + event_name
-#     return carb.events.type_from_string(n)
-
-# event_name = 'go'
-# reg_event_name = registered_event_name(event_name)
-# message_bus = omni.kit.app.get_app().get_message_bus_event_stream()
-
-# message_bus.push(reg_event_name, payload={})
-
-def GetStartEndTimeForAnim(AnimPath):
-    # not tested yet ...
-
-    UsdStageHelper = UsdStageHelper()
-    stage = UsdStageHelper._get_stage()
-    src_skel_prim = stage.GetPrimAtPath(AnimPath)
-    startTime = endTime = 0
-    src_skel_anim = UsdSkel.Animation(src_skel_prim)
-    if src_skel_anim:
-        attrs = [src_skel_prim.GetAttribute(attr_name) for attr_name in src_skel_anim.GetSchemaAttributeNames()]
-        for attr in attrs:
-            time_samples = attr.GetTimeSamples()
-            if len(time_samples) > 0:
-                enabled = True
-                if time_samples[0] < startTime:
-                    startTime = time_samples[0]
-                if time_samples[-1] > endTime:
-                    endTime = time_samples[-1]
-
-    return startTime, endTime
-        
-
-
-def PCM2WAV(rate, data):
-    """
-    Write a NumPy array as a WAV file.
-
-    Parameters
-    ----------
-    filename : string or open file handle
-        Output wav file.
-    rate : int
-        The sample rate (in samples/sec).
-    data : ndarray
-        A 1-D or 2-D NumPy array of either integer or float data-type.
-
-    Notes
-    -----
-    * Writes a simple uncompressed WAV file.
-    * To write multiple-channels, use a 2-D array of shape
-      (Nsamples, Nchannels).
-    * The bits-per-sample and PCM/float will be determined by the data-type.
-
-    Common data types: [1]_
-
-    =====================  ===========  ===========  =============
-         WAV format            Min          Max       NumPy dtype
-    =====================  ===========  ===========  =============
-    32-bit floating-point  -1.0         +1.0         float32
-    32-bit PCM             -2147483648  +2147483647  int32
-    16-bit PCM             -32768       +32767       int16
-    8-bit PCM              0            255          uint8
-    =====================  ===========  ===========  =============
-
-    Note that 8-bit PCM is unsigned.
-
-    References
-    ----------
-    .. [1] IBM Corporation and Microsoft Corporation, "Multimedia Programming
-       Interface and Data Specifications 1.0", section "Data Format of the
-       Samples", August 1991
-       http://www.tactilemedia.com/info/MCI_Control_Info.html
-
-    Examples
-    --------
-    Create a 100Hz sine wave, sampled at 44100Hz.
-    Write to 16-bit PCM, Mono.
-
-    >>> from scipy.io.wavfile import write
-    >>> samplerate = 44100; fs = 100
-    >>> t = np.linspace(0., 1., samplerate)
-    >>> amplitude = np.iinfo(np.int16).max
-    >>> data = amplitude * np.sin(2. * np.pi * fs * t)
-    >>> write("example.wav", samplerate, data.astype(np.int16))
-
-    """
-    fs = rate
-    out = b''
-
-    try:
-        dkind = data.dtype.kind
-        if not (dkind == 'i' or dkind == 'f' or (dkind == 'u' and
-                                                    data.dtype.itemsize == 1)):
-            raise ValueError("Unsupported data type '%s'" % data.dtype)
-
-        header_data = b''
-
-        header_data += b'RIFF'
-        # header_data += b'\x00\x00\x00\x00'
-        header_data += struct.pack('<I', data.shape[0]+36)
-
-        header_data += b'WAVE'
-
-        # fmt chunk
-        header_data += b'fmt '
-        if dkind == 'f':
-            format_tag = WAVE_FORMAT.IEEE_FLOAT
-        else:
-            format_tag = WAVE_FORMAT.PCM
-        if data.ndim == 1:
-            channels = 1
-        else:
-            channels = data.shape[1]
-        bit_depth = data.dtype.itemsize * 8
-        bytes_per_second = fs*(bit_depth // 8)*channels
-        block_align = channels * (bit_depth // 8)
-
-        fmt_chunk_data = struct.pack('<HHIIHH', format_tag, channels, fs,
-                                        bytes_per_second, block_align, bit_depth)
-        if not (dkind == 'i' or dkind == 'u'):
-            # add cbSize field for non-PCM files
-            fmt_chunk_data += b'\x00\x00'
-
-        header_data += struct.pack('<I', len(fmt_chunk_data))
-        header_data += fmt_chunk_data
-
-        # fact chunk (non-PCM files)
-        if not (dkind == 'i' or dkind == 'u'):
-            header_data += b'fact'
-            header_data += struct.pack('<II', 4, data.shape[0])
-
-        # check data size (needs to be immediately before the data chunk)
-        if ((len(header_data)-4-4) + (4+4+data.nbytes)) > 0xFFFFFFFF:
-            raise ValueError("Data exceeds wave file size limit")
-        out += header_data
-        # data chunk
-        out +=(b'data')
-        out += struct.pack('<I', data.nbytes)
-        if data.dtype.byteorder == '>' or (data.dtype.byteorder == '=' and
-                                            sys.byteorder == 'big'):
-            data = data.byteswap()
-
-        out += data.ravel().view('b').data
-        return out
-
-    except Exception as e:
-        print("PCM2WAV could not serialize into WAV")
-        print(e)
-        return None
-
-
-class MyExtension(omni.ext.IExt):
-    def on_startup(self, ext_id):
-        # print("[convai] Convai")
-        self.IsCapturingAudio = False
+class ConvaiExtension(omni.ext.IExt):
+    def on_startup(self, ext_id: str):
         self._window = ui.Window("Convai", width=300, height=300)
+        self.IsCapturingAudio = False
+        self.on_new_frame_sub = None
+        self.channel_address = None
+        self.channel = None
+        self.SessionID = None
+        self.channelState = grpc.ChannelConnectivity.IDLE
+        self.client = None
+        self.ConvaiGRPCGetResponseProxy = None
+        self.PyAudio = pyaudio.PyAudio()
+        self.stream = None
+        self.Tick = False
+        self.TickThread = None
+        self.ConvaiAudioPlayer = ConvaiAudioPlayer(self._on_start_talk_callback, self._on_stop_talk_callback)
+        self.LastReadyTranscription = ""
+        self.ResponseTextBuffer = ""
 
-        self.ResponseQueue = queue.Queue()
-        self.EventsToLaunch = []
-        self.sessionID = -1
-        self.TryToPlay = 0
-        # self.EventsToLaunch.append({'class': "talk", 'TimeToFire': 1})
-        # self.EventsToLaunch.append({'class': "dance", 'TimeToFire': 3})
+        self.response_UI_Label_text = ""
+        self.action_UI_Label_text = "<Action>"
+        self.transcription_UI_Label_text = ""
+        # self.response_UI_Label_text = "<Response will apear here>"
+        self.response_UI_Label_text = "" # Turn off response text due to unknown crash
+        self.StartTalking_Btn_text = "Start Talking"
+        self.StartTalking_Btn_state = True
+        self.UI_Lock = threading.Lock()
+        self.Mic_Lock = threading.Lock()
+        self.UI_update_counter = 0
 
+        self.setup_UI()
+        self.read_config()
+        self.create_channel()
 
-        self.VoiceCap_Btn = ui.Button("Start Voice Capture", clicked_fn=lambda: on_VoiceCap())
+        log("ConvaiExtension started")
 
-        self.on_new_frame_sub = (
-            omni.usd.get_context()
-            .get_rendering_event_stream()
-            .create_subscription_to_pop(self._on_frame_event, name="convai new frame")
-        )
-
-        self.on_new_TimelineTick_sub = (
-            omni.timeline.get_timeline_interface()
-            .get_timeline_event_stream()
-            .create_subscription_to_pop(self._on_TimelineTick_event, name="convai new frame")
-        )
-
+    def setup_UI(self):
         with self._window.frame:
-            with ui.VStack() :
+            with ui.VStack():
                 with ui.HStack(height = ui.Length(30)):
-                    l = ui.Label("Enter Convai API key")
+                    l = ui.Label("Convai API key")
                     self.APIKey_input_UI = ui.StringField()
-                    # self.APIKey_input_UI.height = ui.Length(30)
-                    # l.height = ui.Length(30)
+
                 ui.Spacer(height=5)
+
                 with ui.HStack(height = ui.Length(30)):
-                    l = ui.Label("Enter Char ID")
+                    l = ui.Label("Character ID")
                     self.CharID_input_UI = ui.StringField()
 
-                # button_width = Constant.ADD_BUTTON_SIZE + 25
-                # add_button = ui.Button(f"{_get_plus_glyph()} Add", width=button_width, height=LABEL_HEIGHT, name="add", clicked_fn=partial(on_add_target, weak_self=weakref.ref(self)))
+                ui.Spacer(height=5)
+
+                # with ui.HStack(height = ui.Length(30)):
+                #     l = ui.Label("Session(Leave empty for 1st time)")
+                #     self.session_input_UI = ui.StringField()
+
+                # ui.Spacer(height=5)
+
+                with ui.HStack(height = ui.Length(30)):
+                    l = ui.Label("Comma seperated actions")
+                    self.actions_input_UI = ui.StringField()
+                    self.actions_input_UI.set_tooltip("e.g. Dances, Jumps")
                 
+                ui.Spacer(height=5)
 
-
-                self.response_UI_Label = ui.Label("<Response will apear here>", height = ui.Length(60), word_wrap = True)
-                self.class_UI_Label = ui.Label("<Class will apear here>", height = ui.Length(30), word_wrap = False)
-
-                ui.Label("Enter comma seperated events here:")
-                self.text_input_UI = ui.StringField(height = ui.Length(30))
-                # self.text_input_UI.model.set_value("dance,magic")
-               
-
-                self.VoiceCap_Btn = ui.Button("Start Voice Capture", clicked_fn=lambda: on_VoiceCap(), height = ui.Length(30))
-                def on_VoiceCap():
-                    if (self.IsCapturingAudio):
-                        self.VoiceCap_Btn.text = "Processing..."
-                        self.VoiceCap_Btn.enabled = False
-                        
-                        def on_response(Response):
-                            self.EventsToLaunch = [] # Clear the current events
-                            self.ResponseQueue.put(Response)
-
-                        args = (PCM2WAV(24000, self.recording), 
-                        self.text_input_UI.model.get_value_as_string(),
-                        self.APIKey_input_UI.model.get_value_as_string(), 
-                        self.CharID_input_UI.model.get_value_as_string(), 
-                        on_response)
-
-                        threading.Thread(target=self.ChatbotQueryWithClassification, args=args).start()
-                       
-                    else:
-                        self.recording = sd.rec(int(10 * 24000), samplerate=24000, channels=1, dtype=np.dtype("int16"))
-                        self.IsCapturingAudio = True
-                        self.VoiceCap_Btn.text = "Stop Voice Capture"
-
-    def _on_frame_event(self, event):
-
-        if self.TryToPlay > 0:
-            omni.timeline.get_timeline_interface().play()
-            self.TryToPlay -= 1
-
-        try:
-            Response = self.ResponseQueue.get_nowait()            
-            try:
-                data = Response.json()
-
-                character_response = data["text"]
-                classification = "idle"
-                if character_response.find("<") >= 0:
-                    begin_class = character_response.find("<")
-                    end_class = character_response.find(">")
-                    classification = character_response[begin_class+1:end_class]
-                    character_response = character_response[:begin_class] + character_response[end_class+1:]
-
-                decode_string = base64.b64decode(data["audio"])
-
-                extension_path = omni.kit.app.get_app().get_extension_manager().get_extension_path_by_module(__name__)
-                FilePath = f"{extension_path}/audioResponse.wav"
-
-                with open(FilePath,'wb') as f:
-                    f.write(decode_string)
-
-
-                self.response_UI_Label.text = character_response
-                self.class_UI_Label.text = classification
-
-                # Get duration of the response audio
-                wav = wv._wave.open(FilePath)
-                rate = wav.getframerate()
-                nframes = wav.getnframes()
-                Duration = math.ceil(nframes / rate)
-
-                self.SpawnAudio(FilePath, Duration)
-
-                def AppendDelayedEvent(DelayedEvent, TimeToFire):
-                    time.sleep(TimeToFire)
-                    self.EventsToLaunch.append(DelayedEvent)
-
-                if classification == "hello":
-                    threading.Thread(target=AppendDelayedEvent, args=('hello', 0)).start()
-                    threading.Thread(target=AppendDelayedEvent, args=('talk', 1)).start()
-                else:
-                    threading.Thread(target=AppendDelayedEvent, args=('talk', 0)).start()
-
-                classes = self.text_input_UI.model.get_value_as_string().replace(" ", "").split(',')
-                if classification in classes and classification != "hello":
-                    threading.Thread(target=AppendDelayedEvent, args=(classification, Duration)).start()
-                    # threading.Thread(target=AppendDelayedEvent, args=('idle' ,Duration+12)).start()
-                else:
-                    threading.Thread(target=AppendDelayedEvent, args=('idle' ,Duration)).start()
-
-            except Exception as e:
-                print("error: " + str(e))
-                print("response: " + Response.text)
+                # self.response_UI_Label = ui.Label("", height = ui.Length(60), word_wrap = True)
+                # self.response_UI_Label.alignment = ui.Alignment.CENTER
                 
-                self.response_UI_Label.text = "Error: Check the logs"
-                self.class_UI_Label.text = "Error: " + str(e)
-                return
+                self.action_UI_Label = ui.Label("<Action>", height = ui.Length(30), word_wrap = False)
+                self.action_UI_Label.alignment = ui.Alignment.CENTER
 
-            finally:
-                self.VoiceCap_Btn.text = "Start Voice Capture"
-                self.IsCapturingAudio = False
-                self.VoiceCap_Btn.enabled = True
-        except:
-            pass
+                ui.Spacer(height=5)
+    
+                self.StartTalking_Btn = ui.Button("Start Talking", clicked_fn=lambda: self.on_start_talking_btn_click(), height = ui.Length(30))
+                
+                self.transcription_UI_Label = ui.Label("", height = ui.Length(60), word_wrap = True)
+                self.transcription_UI_Label.alignment = ui.Alignment.CENTER
 
+        self.on_new_update_sub = (
+            omni.usd.get_context()
+            .get_rendering_event_stream()
+            .create_subscription_to_pop(self._on_UI_update_event, name="convai new UI update")
+        )
 
+    def _on_UI_update_event(self, e):
+        # if self.UI_update_counter>1000:
+        #     self.UI_update_counter = 0
+        # self.UI_update_counter += 1
 
-    def _on_TimelineTick_event(self, TickEvent):
-        # print(TickEvent.payload.get_dict())
-        # stage = UsdStageHelper()._get_stage()
-        # stage.SetEndTimeCode(500)
-        # stage.set
-        # print(dir(omni.timeline.get_timeline_interface()))
-
-        # stage = UsdStageHelper()._get_stage()
-        # print('-------------------------------------------------------------------')
-        # print(stage.GetEndTimeCode())
-
-        for eventToLaunch in self.EventsToLaunch:
-            if "currentTime" not in TickEvent.payload.get_dict():
-                continue
-
-            CurrentTIme = TickEvent.payload.get_dict()["currentTime"]
-            # TargetTime = eventToLaunch["TimeToFire"]
-
-            # CurrentTIme = math.ceil(CurrentTIme)
-            # TargetTime  = math.ceil(TargetTime)
-            
-            # if CurrentTIme == TargetTime:
-            #     classification = eventToLaunch["class"]
-            #     FireEvent(classification) 
-            #     print("Fired event: " + classification + ", at time: " + str(CurrentTIme))
-            if (eventToLaunch not in ["talk", "hello"]):
-                omni.kit.commands.execute('DeletePrims',
-                paths=['/World/Convai_Audio'])
-            FireEvent(eventToLaunch) 
-            print("Fired event: " + eventToLaunch + ", at time: " + str(CurrentTIme))
-
-        if len(self.EventsToLaunch) > 0:
-            self.EventsToLaunch = []
-
-    def SpawnAudio(self, AudioFilePath, duration=0):
-        stage = UsdStageHelper()._get_stage()
+        if self.UI_Lock.locked():
+            log("UI_Lock is locked", 1)
+            return
         
-        startTimeActual = omni.timeline.get_timeline_interface().get_current_time()
-        startTimeFrame = startTimeActual * stage.GetTimeCodesPerSecond()
-        endTimeFrame = (startTimeActual + duration) * stage.GetTimeCodesPerSecond()
-        endTimeFrameActual = endTimeFrame / stage.GetTimeCodesPerSecond()
-        print("Duration: " + str(duration) + "seconds, Start Frame: " + str(startTimeFrame) + "End frame: " + str(endTimeFrame))
-        if endTimeFrame > stage.GetEndTimeCode():
-            omni.timeline.get_timeline_interface().set_start_time(0)
-            omni.timeline.get_timeline_interface().set_end_time(0)
-            omni.timeline.get_timeline_interface().set_end_time(math.ceil(duration) + 1) #  + 1 margin
-            startTimeFrame = Sdf.TimeCode(0)
-            # omni.timeline.get_timeline_interface().play()
-            self.TryToPlay = 10
-            print ("set end time to: " + str(duration) + " seconds which is " + str(endTimeFrame-startTimeFrame) + " frames")
+        with self.UI_Lock:
+            # self.response_UI_Label.text = str(self.response_UI_Label_text)
+            self.action_UI_Label.text = str(self.action_UI_Label_text)
+            self.transcription_UI_Label.text = str(self.transcription_UI_Label_text)
+            self.StartTalking_Btn.text = self.StartTalking_Btn_text
+            self.StartTalking_Btn.enabled = self.StartTalking_Btn_state
 
-        omni.kit.commands.execute('DeletePrims',
-            paths=['/World/Convai_Audio'])
+    def start_tick(self):
+        if self.Tick:
+            log("Tick already started", 1)
+            return
+        self.Tick = True
+        self.TickThread = threading.Thread(target=self._on_tick)
+        self.TickThread.start()
 
-        omni.kit.commands.execute('CreatePrimWithDefaultXform',
-            prim_type='Sound',
-            prim_path="/World/Convai_Audio",
-                attributes={'auralMode': 'nonSpatial',
-                            'filePath' : AudioFilePath,
-                            'startTime': startTimeFrame})
+    def stop_tick(self):
+        if self.TickThread and self.Tick:
+            self.Tick = False
+            self.TickThread.join()
+
+    def read_config(self):
+        config = configparser.ConfigParser()
+        config.read(os.path.join(__location__, 'convai.env'))
+        api_key = config.get("CONVAI", "API_KEY")
+        self.APIKey_input_UI.model.set_value(api_key)
+
+        character_id = config.get("CONVAI", "CHARACTER_ID")
+        self.CharID_input_UI.model.set_value(character_id)
+
+        actions_text = config.get("CONVAI", "ACTIONS")
+        self.actions_input_UI.model.set_value(actions_text)
+
+        self.channel_address = config.get("CONVAI", "CHANNEL")
+
+    def save_config(self):
+        config = configparser.ConfigParser()
+        config.read(os.path.join(__location__, 'convai.env'))
+        config.set("CONVAI", "API_KEY", self.APIKey_input_UI.model.get_value_as_string())
+        config.set("CONVAI", "CHARACTER_ID", self.CharID_input_UI.model.get_value_as_string())
+        config.set("CONVAI", "ACTIONS", self.actions_input_UI.model.get_value_as_string())
+        # config.set("CONVAI", "CHANNEL", self.channel_address)
+        with open(os.path.join(__location__, 'convai.env'), 'w') as file:
+            config.write(file)
+
+    def create_channel(self):
+        if (self.channel):
+            log("gRPC channel already created")
+            return
+        
+        self.channel = grpc.secure_channel(self.channel_address, grpc.ssl_channel_credentials())
+        # self.channel.subscribe(self.on_channel_state_change, True)
+        log("Created gRPC channel")
+
+    def close_channel(self):
+        if (self.channel):
+            self.channel.close()
+            self.channel = None
+            log("close_channel - Closed gRPC channel")
+        else:
+            log("close_channel - gRPC channel already closed")
+
+    def on_start_talking_btn_click(self):
+        if (self.IsCapturingAudio):
+            # Change UI
+            with self.UI_Lock:
+                self.StartTalking_Btn_text = "Processing..."
+                # self.StartTalking_Btn_text = "Start Talking"
+                self.StartTalking_Btn_state = False
+
+                # Reset response UI text
+                self.response_UI_Label_text = ""
+
+            # Do one last mic read
+            self.read_mic_and_send_to_grpc(True) 
+            # time.sleep(0.01)
+            # Stop Mic
+            self.stop_mic()
+
+        else:
+            # self.clean_grpc_stream()
+            # self.create_channel()
+
+
+            # Create gRPC stream
+            self.ConvaiGRPCGetResponseProxy = ConvaiGRPCGetResponseProxy(self)
+
+            # Open Mic stream
+            self.start_mic()
+
+            # Stop any on-going audio
+            self.ConvaiAudioPlayer.stop()
+
+            # Save API key, character ID and session ID
+            self.save_config()
+
+            self.UI_Lock.acquire()
+            # Reset transcription UI text
+            self.transcription_UI_Label_text = ""
+            self.LastReadyTranscription = ""
+
+            # Change Btn text
+            self.StartTalking_Btn_text = "Stop"
+            self.UI_Lock.release()
 
     def on_shutdown(self):
-        print("[convai] MyExtension shutdown")
-        self.EventsToLaunch = []
+        self.clean_grpc_stream()
+        self.close_channel()
+        self.stop_tick()
+        log("ConvaiExtension shutdown")
 
-    def ChatbotQueryWithClassification(self, AudioWav, Classes, APIKey, CharacterID, callback):
-        url = "https://api.convai.com/character/getResponse"
+    def start_mic(self):
+        if self.IsCapturingAudio == True:
+            log("start_mic - mic is already capturing audio", 1)
+            return
+        self.stream = self.PyAudio.open(format=FORMAT,
+                        channels=CHANNELS,
+                        rate=RATE,
+                        input=True,
+                        frames_per_buffer=CHUNK)
+        self.IsCapturingAudio = True
+        self.start_tick()
+        log("start_mic - Started Recording")
 
-        payload={
-            'charID': CharacterID,
-            'sessionID': self.sessionID,
-            'responseLevel': '5',
-            'voiceResponse': 'True',    
-            'classification': 'True',
-            'classLabels': Classes}
+    def stop_mic(self):
+        if self.IsCapturingAudio == False:
+            log("stop_mic - mic has not started yet", 1)
+            return
+        
+        self.stop_tick()
 
+        if self.stream:
+            self.stream.stop_stream()
+            self.stream.close()
+        else:
+            log("stop_mic - could not close mic stream since it is None", 1)
+        
+        self.IsCapturingAudio = False
+        log("stop_mic - Stopped Recording")
 
-        # print(payload)
-        files=[
-        ('file',('audio.wav', AudioWav,'audio/wav'))
-        ]
+    def clean_grpc_stream(self):
+        if self.ConvaiGRPCGetResponseProxy:
+            self.ConvaiGRPCGetResponseProxy.Parent = None
+            del self.ConvaiGRPCGetResponseProxy
+        self.ConvaiGRPCGetResponseProxy = None
+        # self.close_channel()
 
-        headers = {
-        'CONVAI-API-KEY': APIKey
-        }
+    def on_transcription_received(self, Transcription: str, IsTranscriptionReady: bool, IsFinal: bool):
+        '''
+        Called when user transcription is received
+        '''
+        self.UI_Lock.acquire()
+        self.transcription_UI_Label_text = self.LastReadyTranscription + " " + Transcription
+        self.UI_Lock.release()
+        if IsTranscriptionReady:
+            self.LastReadyTranscription = self.LastReadyTranscription + " " + Transcription
 
+    def on_data_received(self, ReceivedText: str, ReceivedAudio: bytes, SampleRate: int, IsFinal: bool):
+        '''
+	    Called when new text and/or Audio data is received
+        '''
+        self.ResponseTextBuffer += str(ReceivedText)
+        if IsFinal:
+            with self.UI_Lock:
+                self.response_UI_Label_text = self.ResponseTextBuffer
+                self.transcription_UI_Label_text = self.ResponseTextBuffer
+                self.ResponseTextBuffer = ""
+        self.ConvaiAudioPlayer.append_to_stream(ReceivedAudio)
+        return
+
+    def on_actions_received(self, Action: str):
+        '''
+	    Called when actions are received
+        '''
+        # Action.replace(".", "")
+        self.UI_Lock.acquire()
+        for InputAction in self.parse_actions():
+            # log (f"on_actions_received: {Action} - {InputAction} - {InputAction.find(Action)}")
+            if Action.find(InputAction) >= 0:
+                self.action_UI_Label_text = InputAction
+                self.fire_event(InputAction)
+                self.UI_Lock.release()
+                return
+        self.action_UI_Label_text = "None"
+        self.UI_Lock.release()
+        
+    def on_session_ID_received(self, SessionID: str):
+        '''
+	    Called when new SessionID is received
+        '''
+        self.SessionID = SessionID
+
+    def on_finish(self):
+        '''
+	    Called when the response stream is done
+        '''
+
+        self.ConvaiGRPCGetResponseProxy = None
+        with self.UI_Lock:
+            self.StartTalking_Btn_text = "Start Talking"
+            self.StartTalking_Btn_state = True
+        self.clean_grpc_stream()
+        log("Received on_finish")
+
+    def on_failure(self, ErrorMessage: str):
+        '''
+        Called when there is an unsuccessful response
+        '''
+        log(f"on_failure called with message: {ErrorMessage}", 1)
+        with self.UI_Lock:
+            self.response_UI_Label_text = "ERROR: Please double check API key and the character ID - Send logs to support@convai.com for further assistance."
+        self.stop_mic()
+        self.on_finish()
+
+    def _on_tick(self):
+        while self.Tick:
+            time.sleep(0.1)
+            if self.IsCapturingAudio == False or self.ConvaiGRPCGetResponseProxy is None:
+                continue
+            self.read_mic_and_send_to_grpc(False)
+
+    def _on_start_talk_callback(self):
+        self.fire_event("start")
+        log("Character Started Talking")
+
+    def _on_stop_talk_callback(self):
+        self.fire_event("stop")
+        log("Character Stopped Talking")
+    
+    def read_mic_and_send_to_grpc(self, LastWrite):
+        with self.Mic_Lock:
+            if self.stream:
+                data = self.stream.read(CHUNK)
+            else:
+                log("read_mic_and_send_to_grpc - could not read mic stream since it is none", 1)
+                data = bytes()
+
+            if self.ConvaiGRPCGetResponseProxy:
+                self.ConvaiGRPCGetResponseProxy.write_audio_data_to_send(data, LastWrite)
+            else:
+                log("read_mic_and_send_to_grpc - ConvaiGRPCGetResponseProxy is not valid", 1)
+
+    def fire_event(self, event_name):
+        def registered_event_name(event_name):
+            """Returns the internal name used for the given custom event name"""
+            n = "omni.graph.action." + event_name
+            return carb.events.type_from_string(n)
+
+        reg_event_name = registered_event_name(event_name)
+        message_bus = omni.kit.app.get_app().get_message_bus_event_stream()
+
+        message_bus.push(reg_event_name, payload={})
+
+    def parse_actions(self):
+        actions = ["None"] + self.actions_input_UI.model.get_value_as_string().split(',')
+        actions = [a.lstrip(" ").rstrip(" ") for a in actions]
+        return actions
+
+class ConvaiGRPCGetResponseProxy:
+    def __init__(self, Parent: ConvaiExtension):
+        self.Parent = Parent
+
+        self.AudioBuffer = deque(maxlen=4096*2)
+        self.InformOnDataReceived = False
+        self.LastWriteReceived = False
+        self.client = None
+        self.NumberOfAudioBytesSent = 0
+        self.call = None
+        self._write_task = None
+        self._read_task = None
+
+        # self._main_task = asyncio.ensure_future(self.activate())
+        self.activate()
+        log("ConvaiGRPCGetResponseProxy constructor")
+
+    def activate(self):
+        # Validate API key
+        if (len(self.Parent.APIKey_input_UI.model.get_value_as_string()) == 0):
+            self.Parent.on_failure("API key is empty")
+            return
+        
+        # Validate Character ID
+        if (len(self.Parent.CharID_input_UI.model.get_value_as_string()) == 0):
+            self.Parent.on_failure("Character ID is empty")
+            return
+        
+        # Validate Channel
+        if self.Parent.channel is None:
+            log("grpc - self.Parent.channel is None", 1)
+            self.Parent.on_failure("gRPC channel was not created")
+            return
+
+        # Create the stub
+        self.client = convai_service.ConvaiServiceStub(self.Parent.channel)
+
+        threading.Thread(target=self.init_stream).start()
+
+    def init_stream(self):
+        log("grpc - stream initialized")
         try:
-            response = requests.request("POST", url, headers=headers, data=payload, files=files)
-            callback(response)
+            for response in self.client.GetResponse(self.create_getGetResponseRequests()):
+                if response.HasField("audio_response"):
+                    log("gRPC - audio_response: {} {} {}".format(response.audio_response.audio_config, response.audio_response.text_data, response.audio_response.end_of_response))
+                    log("gRPC - session_id: {}".format(response.session_id))
+                    self.Parent.on_session_ID_received(response.session_id)
+                    self.Parent.on_data_received(
+                        response.audio_response.text_data,
+                        response.audio_response.audio_data,
+                        response.audio_response.audio_config.sample_rate_hertz,
+                        response.audio_response.end_of_response)
 
+                elif response.HasField("action_response"):
+                    log(f"gRPC - action_response: {response.action_response.action}")
+                    self.Parent.on_actions_received(response.action_response.action)
+
+                elif response.HasField("user_query"):
+                    log(f"gRPC - user_query: {response.user_query}")
+                    self.Parent.on_transcription_received(response.user_query.text_data, response.user_query.is_final, response.user_query.end_of_response)
+
+                else:
+                    log("Stream Message: {}".format(response))
+            time.sleep(0.1)
+                
         except Exception as e:
-            callback(None)
-            print(e)
-            return None
+            if 'response' in locals() and response is not None and response.HasField("audio_response"):
+                self.Parent.on_failure(f"gRPC - Exception caught in loop: {str(e)} - Stream Message: {response}")
+            else:
+                self.Parent.on_failure(f"gRPC - Exception caught in loop: {str(e)}")
+            traceback.print_exc()
+            return
+        self.Parent.on_finish()
 
+    def create_initial_GetResponseRequest(self)-> convai_service_msg.GetResponseRequest:
+        action_config = convai_service_msg.ActionConfig(
+            classification = 'singlestep',
+            context_level = 1
+        )
+        action_config.actions[:] = self.Parent.parse_actions()
+        action_config.objects.append(
+            convai_service_msg.ActionConfig.Object(
+                name = "dummy",
+                description = "A dummy object."
+            )
+        )
 
+        log(f"gRPC - actions parsed: {action_config.actions}")
+        action_config.characters.append(
+            convai_service_msg.ActionConfig.Character(
+                name = "User",
+                bio = "Person playing the game and asking questions."
+            )
+        )
+        get_response_config = convai_service_msg.GetResponseRequest.GetResponseConfig(
+                character_id = self.Parent.CharID_input_UI.model.get_value_as_string(),
+                api_key = self.Parent.APIKey_input_UI.model.get_value_as_string(),
+                audio_config = convai_service_msg.AudioConfig(
+                    sample_rate_hertz = RATE
+                ),
+                action_config = action_config
+            )
+        if self.Parent.SessionID and self.Parent.SessionID != "":
+            get_response_config.session_id = self.Parent.SessionID
+        return convai_service_msg.GetResponseRequest(get_response_config = get_response_config)
 
+    def create_getGetResponseRequests(self)-> Generator[convai_service_msg.GetResponseRequest, None, None]:
+        req = self.create_initial_GetResponseRequest()
+        yield req
 
+        # for i in range(0, 10):
+        while 1:
+            IsThisTheFinalWrite = False
+            GetResponseData = None
 
-def FireEvent(event_name):
-    def registered_event_name(event_name):
-        """Returns the internal name used for the given custom event name"""
-        n = "omni.graph.action." + event_name
-        return carb.events.type_from_string(n)
+            if (0): # check if this is a text request
+                pass
+            else:
+                data, IsThisTheFinalWrite = self.consume_from_audio_buffer()
+                if len(data) == 0 and IsThisTheFinalWrite == False:
+                    time.sleep(0.05)
+                    continue
+                # Load the audio data to the request
+                self.NumberOfAudioBytesSent += len(data)
+                # if len(data):
+                #     log(f"len(data) = {len(data)}")
+                GetResponseData = convai_service_msg.GetResponseRequest.GetResponseData(audio_data = data)
 
-    reg_event_name = registered_event_name(event_name)
-    message_bus = omni.kit.app.get_app().get_message_bus_event_stream()
+            # Prepare the request
+            req = convai_service_msg.GetResponseRequest(get_response_data = GetResponseData)
+            yield req
 
-    message_bus.push(reg_event_name, payload={})
+            if IsThisTheFinalWrite:
+                log(f"gRPC - Done Writing - {self.NumberOfAudioBytesSent} audio bytes sent")
+                break
+            time.sleep(0.1)
 
+    def write_audio_data_to_send(self, Data: bytes, LastWrite: bool):
+        self.AudioBuffer.append(Data)
+        if LastWrite:
+            self.LastWriteReceived = True
+            log(f"gRPC LastWriteReceived")
 
+        # if self.InformOnDataReceived:
+        #     # Inform of new data to send
+        #     self._write_task = asyncio.ensure_future(self.write_stream())
+        #     # Reset
+        #     self.InformOnDataReceived = False
+
+    def finish_writing(self):
+        self.write_audio_data_to_send(bytes(), True)
+
+    def consume_from_audio_buffer(self):
+        Length = len(self.AudioBuffer)
+        IsThisTheFinalWrite = False
+        data = bytes()
+
+        if Length:
+            data = self.AudioBuffer.pop()
+            # self.AudioBuffer = bytes()
+        
+        if self.LastWriteReceived and Length == 0:
+            IsThisTheFinalWrite = True
+        else:
+            IsThisTheFinalWrite = False
+
+        if IsThisTheFinalWrite:
+            log(f"gRPC Consuming last mic write")
+
+        return data, IsThisTheFinalWrite
+    
+    def __del__(self):
+        self.Parent = None
+        # if self._main_task:
+        #     self._main_task.cancel()
+        # if self._write_task:
+        #     self._write_task.cancel()
+        # if self._read_task:
+        #     self._read_task.cancel()
+        # if self.call:
+        #     self.call.cancel()
+        log("ConvaiGRPCGetResponseProxy Destructor")
