@@ -1,10 +1,10 @@
 [package]
 # Semantic Versionning is used: https://semver.org/
-version = "0.1"
+version = "1.0"
 
 # The title and description fields are primarily for displaying extension info in UI
 title = "Convai Character API"
-description="Integrate Convai character API with Omniverse."
+description="Integrate Convai API with Omniverse."
 
 icon = "data/icon.png"
 preview_image = "data/preview.png"
@@ -16,13 +16,13 @@ readme  = "docs/README.md"
 feature = true
 
 # URL of the extension source repository.
-repository = ""
+repository = "https://github.com/Conv-AI/ov_extension"
 
 # One of categories for UI.
 category = "Convai"
 
 # Keywords for the extension
-keywords = ["kit", "convai"]
+keywords = ["kit", "convai", "chatgpt", "chatbot"]
 
 
 # Use omni.ui to build simple UI
