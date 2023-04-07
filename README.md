@@ -25,6 +25,9 @@ To install the Convai Omniverse Extension, follow these steps:
 7. The Convai window should appear, drag it and dock it in any suitable area of the UI.
 8. If the Convai window does not appear, go to the `Window` menu and select `Convai` from the list.
 
+Note: The extension is tested in Omniverse Code, but you are welcome to try it out in other apps as well.
+
+
 ## Configuration
 To add your API Key and Character ID, follow these steps:
 1. Sign up at [Convai](https://convai.com/).
