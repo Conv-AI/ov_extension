@@ -18,6 +18,8 @@ import traceback
 import time
 from collections import deque
 import random
+from functools import partial
+
 
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
@@ -30,8 +32,10 @@ def log(text: str, warning: bool =False):
     print(f"[convai] {'[Warning]' if warning else ''} {text}")
 
 class ConvaiExtension(omni.ext.IExt):
+    WINDOW_NAME = "Convai"
+    MENU_PATH = f"Window/{WINDOW_NAME}"
+
     def on_startup(self, ext_id: str):
-        self._window = ui.Window("Convai", width=300, height=300)
         self.IsCapturingAudio = False
         self.on_new_frame_sub = None
         self.channel_address = None
@@ -47,6 +51,7 @@ class ConvaiExtension(omni.ext.IExt):
         self.ConvaiAudioPlayer = ConvaiAudioPlayer(self._on_start_talk_callback, self._on_stop_talk_callback)
         self.LastReadyTranscription = ""
         self.ResponseTextBuffer = ""
+        self.OldCharacterID = ""
 
         self.response_UI_Label_text = ""
         self.action_UI_Label_text = "<Action>"
@@ -59,6 +64,11 @@ class ConvaiExtension(omni.ext.IExt):
         self.Mic_Lock = threading.Lock()
         self.UI_update_counter = 0
 
+
+        ui.Workspace.set_show_window_fn(ConvaiExtension.WINDOW_NAME, partial(self.show_window, None))
+        ui.Workspace.show_window(ConvaiExtension.WINDOW_NAME)
+        
+
         self.setup_UI()
         self.read_config()
         self.create_channel()
@@ -66,6 +76,16 @@ class ConvaiExtension(omni.ext.IExt):
         log("ConvaiExtension started")
 
     def setup_UI(self):
+        self._window = ui.Window(ConvaiExtension.WINDOW_NAME, width=300, height=300)
+
+        # Put the new menu
+        editor_menu = omni.kit.ui.get_editor_menu()
+        
+        if editor_menu:
+            self._menu = editor_menu.add_item(
+                ConvaiExtension.MENU_PATH, self.show_window, toggle=True, value=True
+            )
+
         with self._window.frame:
             with ui.VStack():
                 with ui.HStack(height = ui.Length(30)):
@@ -111,6 +131,8 @@ class ConvaiExtension(omni.ext.IExt):
             .get_rendering_event_stream()
             .create_subscription_to_pop(self._on_UI_update_event, name="convai new UI update")
         )
+
+        return self._window
 
     def _on_UI_update_event(self, e):
         # if self.UI_update_counter>1000:
@@ -200,12 +222,18 @@ class ConvaiExtension(omni.ext.IExt):
             self.stop_mic()
 
         else:
-            # self.clean_grpc_stream()
-            # self.create_channel()
+            # Reset Session ID if Character ID changes
+            if self.OldCharacterID != self.CharID_input_UI.model.get_value_as_string():
+                self.OldCharacterID = self.CharID_input_UI.model.get_value_as_string()
+                self.SessionID = ""
 
+            with self.UI_Lock:
+                # Reset transcription UI text
+                self.transcription_UI_Label_text = ""
+                self.LastReadyTranscription = ""
 
-            # Create gRPC stream
-            self.ConvaiGRPCGetResponseProxy = ConvaiGRPCGetResponseProxy(self)
+                # Change Btn text
+                self.StartTalking_Btn_text = "Stop"
 
             # Open Mic stream
             self.start_mic()
@@ -216,19 +244,24 @@ class ConvaiExtension(omni.ext.IExt):
             # Save API key, character ID and session ID
             self.save_config()
 
-            self.UI_Lock.acquire()
-            # Reset transcription UI text
-            self.transcription_UI_Label_text = ""
-            self.LastReadyTranscription = ""
-
-            # Change Btn text
-            self.StartTalking_Btn_text = "Stop"
-            self.UI_Lock.release()
+            # Create gRPC stream
+            self.ConvaiGRPCGetResponseProxy = ConvaiGRPCGetResponseProxy(self)
 
     def on_shutdown(self):
         self.clean_grpc_stream()
         self.close_channel()
         self.stop_tick()
+
+        if self._menu:
+            self._menu = None
+
+        if self._window:
+            self._window.destroy()
+
+        self._window = None
+        # Deregister the function that shows the window from omni.ui
+        ui.Workspace.set_show_window_fn(ConvaiExtension.WINDOW_NAME, None)
+
         log("ConvaiExtension shutdown")
 
     def start_mic(self):
@@ -330,7 +363,7 @@ class ConvaiExtension(omni.ext.IExt):
         '''
         log(f"on_failure called with message: {ErrorMessage}", 1)
         with self.UI_Lock:
-            self.response_UI_Label_text = "ERROR: Please double check API key and the character ID - Send logs to support@convai.com for further assistance."
+            self.transcription_UI_Label_text = "ERROR: Please double check API key and the character ID - Send logs to support@convai.com for further assistance."
         self.stop_mic()
         self.on_finish()
 
@@ -377,6 +410,37 @@ class ConvaiExtension(omni.ext.IExt):
         actions = ["None"] + self.actions_input_UI.model.get_value_as_string().split(',')
         actions = [a.lstrip(" ").rstrip(" ") for a in actions]
         return actions
+
+    def show_window(self, menu, value):
+        if value:
+            self._window = self.setup_UI()
+            self.read_config()
+            self._window.set_visibility_changed_fn(self._visiblity_changed_fn)
+        else:
+            if self._window:
+                self._window.visible = False
+
+    def _visiblity_changed_fn(self, visible):
+        # Called when the user pressed "X"
+        self._set_menu(visible)
+        if not visible:
+            # Destroy the window, since we are creating new window
+            # in show_window
+            asyncio.ensure_future(self._destroy_window_async())
+
+    def _set_menu(self, value):
+        """Set the menu to create this window on and off"""
+        editor_menu = omni.kit.ui.get_editor_menu()
+        if editor_menu:
+            editor_menu.set_value(ConvaiExtension.MENU_PATH, value)
+
+    async def _destroy_window_async(self):
+        # wait one frame, this is due to the one frame defer
+        # in Window::_moveToMainOSWindow()
+        await omni.kit.app.get_app().next_update_async()
+        if self._window:
+            self._window.destroy()
+            self._window = None
 
 class ConvaiGRPCGetResponseProxy:
     def __init__(self, Parent: ConvaiExtension):
