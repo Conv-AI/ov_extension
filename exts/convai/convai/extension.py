@@ -63,6 +63,7 @@ class ConvaiExtension(omni.ext.IExt):
         self.UI_Lock = threading.Lock()
         self.Mic_Lock = threading.Lock()
         self.UI_update_counter = 0
+        self.on_new_update_sub = None
 
 
         ui.Workspace.set_show_window_fn(ConvaiExtension.WINDOW_NAME, partial(self.show_window, None))
@@ -126,18 +127,19 @@ class ConvaiExtension(omni.ext.IExt):
                 self.transcription_UI_Label = ui.Label("", height = ui.Length(60), word_wrap = True)
                 self.transcription_UI_Label.alignment = ui.Alignment.CENTER
 
-        self.on_new_update_sub = (
-            omni.usd.get_context()
-            .get_rendering_event_stream()
-            .create_subscription_to_pop(self._on_UI_update_event, name="convai new UI update")
-        )
+        if self.on_new_update_sub is None:
+            self.on_new_update_sub = (
+                omni.usd.get_context()
+                .get_rendering_event_stream()
+                .create_subscription_to_pop(self._on_UI_update_event, name="convai new UI update")
+            )
 
         return self._window
 
     def _on_UI_update_event(self, e):
-        # if self.UI_update_counter>1000:
-        #     self.UI_update_counter = 0
-        # self.UI_update_counter += 1
+        if self.UI_update_counter>1000:
+            self.UI_update_counter = 0
+        self.UI_update_counter += 1
 
         if self.UI_Lock.locked():
             log("UI_Lock is locked", 1)
