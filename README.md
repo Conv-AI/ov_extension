@@ -8,6 +8,7 @@ To install the Convai Omniverse Extension, follow these steps:
 2. Run `link_app.bat` with `--app <app name>` flag, where `<app name>` is an Omniverse app (e.g. Code, Audio2Face, Machinima, Create, etc...)
 3. Open Omniverse app of your choice (e.g Code) and from the `Window` menu click `Extensions`.
 4. In the extensions tab, click the gear icon in the top right.
+<img align="left" height="100" src="images/extensions.png?raw=true">
 ![Alt text](images/extensions.png?raw=true "Openning the extension search paths window")
 5. Click the green plus icon in the `Edit` column and add the absolute path to the `exts` folder found in the repository directory.
 ![Alt text](images/SearchPath.png?raw=true "Adding the extension search path")
