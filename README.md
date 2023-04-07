@@ -20,7 +20,7 @@ To install the Convai Omniverse Extension, follow these steps:
 6. Search for `Convai` in the top left search bar, make sure to check `Enabled`.
 <!-- ![Alt text](images/ConvaiSearch.png?raw=true "Enabling Convai extension") -->
 <p align="left">
-<img height="350" src="images/ConvaiSearch.png?raw=true">
+<img height="250" src="images/ConvaiSearch.png?raw=true">
 </p>
 7. The Convai window should appear, drag it and dock it in any suitable area of the UI.
 8. If the Convai window does not appear, go to the `Window` menu and select `Convai` from the list.
