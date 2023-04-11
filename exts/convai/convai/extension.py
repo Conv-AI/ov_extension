@@ -69,23 +69,23 @@ class ConvaiExtension(omni.ext.IExt):
         ui.Workspace.set_show_window_fn(ConvaiExtension.WINDOW_NAME, partial(self.show_window, None))
         ui.Workspace.show_window(ConvaiExtension.WINDOW_NAME)
         
-
-        self.setup_UI()
-        self.read_config()
-        self.create_channel()
-
-        log("ConvaiExtension started")
-
-    def setup_UI(self):
-        self._window = ui.Window(ConvaiExtension.WINDOW_NAME, width=300, height=300)
-
-        # Put the new menu
+        # # Put the new menu
         editor_menu = omni.kit.ui.get_editor_menu()
         
         if editor_menu:
             self._menu = editor_menu.add_item(
                 ConvaiExtension.MENU_PATH, self.show_window, toggle=True, value=True
             )
+
+        # self.show_window(None, True)
+        self.read_channel_address_from_config()
+        self.create_channel()
+
+        log("ConvaiExtension started")
+
+    def setup_UI(self):
+        self._window = ui.Window(ConvaiExtension.WINDOW_NAME, width=300, height=300)
+        self._window.set_visibility_changed_fn(self._visiblity_changed_fn)
 
         with self._window.frame:
             with ui.VStack():
@@ -129,10 +129,12 @@ class ConvaiExtension(omni.ext.IExt):
 
         if self.on_new_update_sub is None:
             self.on_new_update_sub = (
-                omni.usd.get_context()
-                .get_rendering_event_stream()
+                omni.kit.app.get_app()
+                .get_update_event_stream()
                 .create_subscription_to_pop(self._on_UI_update_event, name="convai new UI update")
             )
+        
+        self.read_UI_from_config()
 
         return self._window
 
@@ -140,7 +142,8 @@ class ConvaiExtension(omni.ext.IExt):
         if self.UI_update_counter>1000:
             self.UI_update_counter = 0
         self.UI_update_counter += 1
-
+        if self._window is None:
+            return
         if self.UI_Lock.locked():
             log("UI_Lock is locked", 1)
             return
@@ -165,7 +168,12 @@ class ConvaiExtension(omni.ext.IExt):
             self.Tick = False
             self.TickThread.join()
 
-    def read_config(self):
+    def read_channel_address_from_config(self):
+        config = configparser.ConfigParser()
+        config.read(os.path.join(__location__, 'convai.env'))
+        self.channel_address = config.get("CONVAI", "CHANNEL")
+
+    def read_UI_from_config(self):
         config = configparser.ConfigParser()
         config.read(os.path.join(__location__, 'convai.env'))
         api_key = config.get("CONVAI", "API_KEY")
@@ -176,8 +184,6 @@ class ConvaiExtension(omni.ext.IExt):
 
         actions_text = config.get("CONVAI", "ACTIONS")
         self.actions_input_UI.model.set_value(actions_text)
-
-        self.channel_address = config.get("CONVAI", "CHANNEL")
 
     def save_config(self):
         config = configparser.ConfigParser()
@@ -414,15 +420,16 @@ class ConvaiExtension(omni.ext.IExt):
         return actions
 
     def show_window(self, menu, value):
+        # with self.UI_Lock:
         if value:
-            self._window = self.setup_UI()
-            self.read_config()
+            self.setup_UI()
             self._window.set_visibility_changed_fn(self._visiblity_changed_fn)
         else:
             if self._window:
                 self._window.visible = False
 
     def _visiblity_changed_fn(self, visible):
+        # with self.UI_Lock:
         # Called when the user pressed "X"
         self._set_menu(visible)
         if not visible:
@@ -437,6 +444,7 @@ class ConvaiExtension(omni.ext.IExt):
             editor_menu.set_value(ConvaiExtension.MENU_PATH, value)
 
     async def _destroy_window_async(self):
+        # with self.UI_Lock:
         # wait one frame, this is due to the one frame defer
         # in Window::_moveToMainOSWindow()
         await omni.kit.app.get_app().next_update_async()
