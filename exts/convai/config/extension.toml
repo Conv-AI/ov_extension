@@ -3,7 +3,7 @@
 version = "1.0.2"
 
 # The title and description fields are primarily for displaying extension info in UI
-title = "Convai Character API"
+title = "Convai"
 description="Integrate Convai API with Omniverse."
 
 icon = "data/icon.png"
