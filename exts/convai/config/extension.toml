@@ -1,6 +1,29 @@
+[python.pipapi]
+# Commands passed to pip install before extension gets enabled. Can also contain flags, like `--upgrade`, `--no--index`, etc.
+# Refer to: https://pip.pypa.io/en/stable/reference/requirements-file-format/
+requirements = [
+    "scipy",
+    "wavio",
+    "sounddevice",
+    "requests",
+    "googleapis-common-protos",
+    "grpcio==1.51.1",
+    "grpcio-tools==1.51.1",
+    "protobuf==4.21.10",
+    "PyAudio==0.2.12",
+    "pydub==0.25.1"
+]
+
+# Allow going to online index. Required to be set to true for pip install call.
+use_online_index = true
+
+# Ignore import check for modules.
+ignore_import_check = false
+
+
 [package]
 # Semantic Versionning is used: https://semver.org/
-version = "1.0.2"
+version = "1.0.3"
 
 # The title and description fields are primarily for displaying extension info in UI
 title = "Convai"
