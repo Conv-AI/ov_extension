@@ -1,6 +1,10 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+# Release 1.0.3
+**Fixed**
+- Extension failed to install on latest Omniverse apps.
+
 # Release 1.0.2
 **Improved**
 - Action Graph for the demo stage.
